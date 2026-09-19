@@ -28,7 +28,7 @@ qmk-myfn/
 
 | 符号 | 类型 | 用途 |
 | :-- | :-- | :-- |
-| `MYFN_LAYER` | 宏 | 新 Fn 层的层号（默认 `4`），在 `config.h` 覆盖 |
+| `MYFN_LAYER` | 宏 | 新 Fn 层的层号；**必须显式定义**、无默认值，防止层号冲突 |
 | `MYFN_BATTERY_KEY` | 宏 | 触发电量显示的键（默认 `KC_SPC`） |
 | `myfn_active()` | 函数 | 当 `MYFN_LAYER` 激活时返回真 |
 | `myfn_fn_status(bool on)` | 弱钩子 | 维护键盘自身的 Fn 标志（如 `Key_Fn_Status`） |

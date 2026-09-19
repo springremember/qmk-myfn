@@ -6,9 +6,10 @@
 #include QMK_KEYBOARD_H
 
 /* Layer index that acts as the "new Fn" layer.
- * Override in the keymap's config.h (e.g. #define MYFN_LAYER _FN). */
+ * 必须由 keymap 的 config.h 显式定义（例如 #define MYFN_LAYER _FN）。
+ * 不提供默认值，避免与其他键盘的层号冲突 / 误覆盖。 */
 #ifndef MYFN_LAYER
-#    define MYFN_LAYER 4
+#    error "qmk-myfn: MYFN_LAYER 未定义，请在 keymap 的 config.h 中显式定义新 Fn 层号"
 #endif
 
 /* Key that shows the battery readout while the Fn layer is held. */
