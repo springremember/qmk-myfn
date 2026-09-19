@@ -36,7 +36,7 @@
 `qmk-myfn` 把这些收敛成一个库：
 
 - 统一的 `myfn_active()`；
-- 用 `layer_state_set_user()` 自动维护键盘的 Fn 标志（通过弱钩子回填）；
+- 用 `layer_state_set_kb()` 自动维护键盘的 Fn 标志（通过弱钩子回填，并回链 `layer_state_set_user()`）；
 - 统一的 `<Fn> + <MYFN_BATTERY_KEY>` 电量拦截（通过弱钩子回填具体显示逻辑）。
 
 **层内容不放进库**：不同键盘的布局宏（`LAYOUT` / `LAYOUT_60_ansi`）、无线键码
@@ -81,8 +81,9 @@ SRC += qmk-myfn/src/myfn.c
 **第 3 步：keymap 的 `config.h` 定义层号与电量键（可选）**
 
 ```c
-/* 必须显式定义，无默认值 */
-#define MYFN_LAYER _FN
+/* 必须显式定义，无默认值；用「数值字面量」，不要写 keymap 内的枚举名 _FN
+ * （config.h 会先被 myfn.c 看到，那时 _FN 还不存在） */
+#define MYFN_LAYER 4
 /* 电量键，默认 KC_SPC */
 #define MYFN_BATTERY_KEY KC_SPC
 ```
@@ -116,7 +117,7 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 
 | 宏 | 默认 | 说明 |
 | :-- | :-- | :-- |
-| `MYFN_LAYER` | **无**（必须定义） | 新 Fn 层的层号。未定义则 `#error`。建议在 `config.h` 写成 `#define MYFN_LAYER _FN`。 |
+| `MYFN_LAYER` | **无**（必须定义） | 新 Fn 层的层号。未定义则 `#error`。请在 `config.h` 用**数值字面量**（如 `#define MYFN_LAYER 4`），不要写 keymap 内部的枚举名 `_FN`。 |
 | `MYFN_BATTERY_KEY` | `KC_SPC` | 在 Fn 层激活时触发电量显示的键码。 |
 
 ### 5.2 `bool myfn_active(void)`
@@ -139,34 +140,44 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 
 ### 5.4 弱钩子 `void myfn_battery(bool pressed)`
 
-当 Fn 层激活且按下/松开 `MYFN_BATTERY_KEY` 时被调用（按下 `true`，松开 `false`）。
+在 Fn 层按下 `MYFN_BATTERY_KEY` 时被调用 `true`，松开时被调用 `false`。
 
 - 库中的默认实现为空，键盘提供真正的显示逻辑即可；
-- 没有电量功能的键盘不必实现（空跑）。
+- 即使「先松开 Fn、再松电量键」，库也会用内部闭锁补一次 `false`（见 §5.5），
+  所以键盘实现无需自己处理这个边界；
+- 没有电量功能的键盘不必实现（按键被库消费，什么都不输出）。
 
 ### 5.5 `bool process_record_myfn(uint16_t keycode, keyrecord_t *record)`
 
 在 `process_record_user()` 中调用。返回 `false` 表示本次事件已被库消费。
 
-- 命中条件：`myfn_active() && keycode == MYFN_BATTERY_KEY`；
-- 命中时调用 `myfn_battery(record->event.pressed)` 并返回 `false`。
+- 按下：若 `myfn_active() && keycode == MYFN_BATTERY_KEY`，置内部 `battery_held`，
+  调用 `myfn_battery(true)` 并返回 `false`；
+- 松开：只要 `battery_held` 为真就调用 `myfn_battery(false)` 并返回 `false`
+  （**不再**要求 `myfn_active()`，避免 Fn 先松开导致电量常驻）；
+- 此外 `layer_state_set_kb()` 在离开 `MYFN_LAYER` 时会兜底清一次（见 §5.6）。
 
-### 5.6 `layer_state_set_user()`（强符号）
+### 5.6 `layer_state_set_kb()`（强符号）
 
-库在 `src/myfn.c` 中定义了一个**强符号** `layer_state_set_user()`，内部转调
-`myfn_fn_status()`：
+库在 `src/myfn.c` 中定义了一个**强符号** `layer_state_set_kb()`：维护 Fn 标志、并在
+离开 Fn 层时兜底关闭电量显示，最后**回链** `layer_state_set_user()`，因此 keymap 仍可
+自定义自己的 user 钩子：
 
 ```c
-layer_state_t layer_state_set_user(layer_state_t state) {
-    myfn_fn_status(layer_state_cmp(state, MYFN_LAYER));
-    return state;
+layer_state_t layer_state_set_kb(layer_state_t state) {
+    bool active = layer_state_cmp(state, MYFN_LAYER);
+    myfn_fn_status(active);                 // 用形参 state，不要读全局 layer_state
+    if (!active && myfn_battery_held) {     // 离开 Fn 层兜底清电量
+        myfn_battery_held = false;
+        myfn_battery(false);
+    }
+    return layer_state_set_user(state);     // 必须回链，否则 keymap 的 user 钩子被吞
 }
 ```
 
-> ⚠️ **注意**：C 语言不允许两个强符号同名。若某个 keymap 也需要自定义
-> `layer_state_set_user()`，它**必须自行调用** `myfn_fn_status(myfn_active())`，
-> 并且不能再依赖库里的那份实现（否则会链接冲突）。
-> 当前 QK61 / NUT65 两个 keymap 都未定义该函数，直接使用库的实现。
+> ⚠️ **注意**：QMK 的调用链是 `layer_state_set_kb()` → `layer_state_set_user()`。
+> 库占用的是 **kb** 级钩子；若键盘自己的 `qk61.c` 也要写 `layer_state_set_kb()`，
+> 会与库冲突（此时应把库的逻辑内联合并）。keymap 的 `layer_state_set_user()` 不受影响。
 
 ## 6. 层内容示例（QK61 `_FN`）
 
@@ -271,8 +282,12 @@ A：默认层号会与其它键盘的层定义撞车、造成误判。改为强�
 A：可以。不实现 `myfn_battery()` 即可（库的弱符号为空），Fn+电量键会空跑。
 
 **Q：我想在 keymap 里也写 `layer_state_set_user()` 怎么办？**
-A：C 不允许重复强符号。请删掉对库实现的依赖，并在你自己的函数里调用
-`myfn_fn_status(myfn_active())`（见 §5.6）。
+A：可以直接写。库占用的是 **kb** 级钩子 `layer_state_set_kb()`，并会回链到你的
+`layer_state_set_user()`；两者不冲突。若你要自己写 `layer_state_set_kb()`，才会与库冲突。
+
+**Q：Fn 先松开、再松电量键，会不会一直显示电量？**
+A：不会。库内部有 `battery_held` 闭锁，松开时无视层状态也会调用 `myfn_battery(false)`；
+并且离开 Fn 层时还会兜底清一次。
 
 **Q：Fn 键要指向新层，厂商的 Fn 逻辑会不会坏？**
 A：这正是 `myfn_fn_status()` 的用途——把新层的激活状态回灌给厂商标志，维持原有行为。

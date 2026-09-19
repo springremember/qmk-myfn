@@ -7,6 +7,18 @@
 
 ## [未发布]
 
+### 修复
+- **电量释放闭锁**：`myfn.c` 新增 `myfn_battery_held`。Fn 先松开、再松电量键时，
+  之前因 `myfn_active()` 已为假而永不调用 `myfn_battery(false)`，导致电量指示常驻。
+  现在松开只看 `battery_held`；并在 `layer_state_set_kb()` 离开 `MYFN_LAYER` 时兜底清一次。
+- **钩子解耦**：库的强符号由 `layer_state_set_user()` 改为 `layer_state_set_kb()`，
+  并**回链** `layer_state_set_user(state)`，保留 keymap 的 user 钩子扩展点
+  （原实现会与想自定义 `layer_state_set_user` 的 keymap 链接冲突）。
+
+### 文档
+- `MYFN_LAYER` 示例改为数值字面量（`#define MYFN_LAYER 4`），不再写 keymap 内部枚举名 `_FN`。
+- 重写 §5.6（kb 钩子 + 回链）、§5.4/§5.5（电量闭锁）、相关 FAQ。
+
 ## [0.1.0] — 2026-09-19
 
 首个版本，配合 QK61 / NUT65 的「新 Fn 层」需求。
